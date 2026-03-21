@@ -28,6 +28,10 @@ func main() {
 				Name: "port",
 			},
 		},
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "kill", Aliases: []string{"k"}},
+			&cli.BoolFlag{Name: "terminate", Aliases: []string{"t"}},
+		},
 		Action: func(ctx context.Context, c *cli.Command) error {
 			port := c.IntArg("port")
 			if port == 0 {
@@ -37,12 +41,34 @@ func main() {
 			if port < 1 || port > 65535 {
 				return errInvalidPort
 			}
+
 			pf := internal.NewProcessFinder()
 			pid, err := (pf.FindPIDByPort(port))
 			if err != nil {
 				return err
 			}
+
 			fmt.Printf("port %v -> pid %v\n", port, pid)
+
+			killFlag := c.Bool("kill")
+			terminateFlag := c.Bool("terminate")
+			if !killFlag && !terminateFlag {
+				return nil
+			}
+
+			killmode := internal.ModeTerm
+			if killFlag {
+				killmode = internal.ModeKill
+			}
+
+			ps := internal.NewProcessSlayer()
+			switch killmode {
+			case internal.ModeTerm:
+				ps.TermProcess(pid)
+			case internal.ModeKill:
+				ps.KillProcess(pid)
+			}
+
 			return nil
 		},
 	}

@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-var ErrPIDNotFound = errors.New("no owner process found for this port")
+var ErrPIDNotFound = errors.New("no process owner found for this port")
 
 type linuxProcessFinder struct{}
 

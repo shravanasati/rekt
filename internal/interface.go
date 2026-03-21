@@ -12,6 +12,6 @@ const (
 )
 
 type ProcessSlayer interface {
-	KillProcess(pid int)
-	TermProcess(pid int)
+	KillProcess(pid int) error
+	TermProcess(pid int) error
 }
