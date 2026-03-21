@@ -13,9 +13,6 @@ import (
 var errPortRequired = errors.New("port argument is required")
 var errInvalidPort = errors.New("port must lie between 1 and 65535")
 
-// todo verify udp and tcp6
-// todo rekt 3000 -k -> kill process
-// todo rekt 3000 -t -> terminate process
 // todo rekt list -> list all processes occupying a port
 // todo handle edge cases like SO_REUSEPORT
 

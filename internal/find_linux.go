@@ -26,27 +26,8 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int) (int, error) {
 		"/proc/net/udp6",
 	}
 
-	allInodes := map[int]bool{}
-
-	for _, netFile := range netFiles {
-		inodes, err := parseNetFile(netFile, port)
-		if err != nil {
-			fmt.Printf("error parsing %v: %v\n", netFile, err)
-			continue
-		}
-
-		for _, inode := range inodes {
-			allInodes[inode] = true
-		}
-	}
-
-	numericProcessIds := []int{}
-	procDirEntries, _ := os.ReadDir("/proc")
-	for _, procEntry := range procDirEntries {
-		if isNumber(procEntry.Name()) {
-			numericProcessIds = append(numericProcessIds, mustParseInt(procEntry.Name()))
-		}
-	}
+	allInodes := getActiveInodes(netFiles, port)
+	numericProcessIds := getNumericPIDs()
 
 	for _, pid := range numericProcessIds {
 		procFdsPath := fmt.Sprintf("/proc/%d/fd", pid)
@@ -71,6 +52,35 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int) (int, error) {
 	}
 
 	return 0, ErrPIDNotFound
+}
+
+func getActiveInodes(netFiles []string, port int) map[int]bool {
+	allInodes := map[int]bool{}
+
+	for _, netFile := range netFiles {
+		inodes, err := parseNetFile(netFile, port)
+		if err != nil {
+			fmt.Printf("error parsing %v: %v\n", netFile, err)
+			continue
+		}
+
+		for _, inode := range inodes {
+			allInodes[inode] = true
+		}
+	}
+
+	return allInodes
+}
+
+func getNumericPIDs() []int {
+	numericProcessIds := []int{}
+	procDirEntries, _ := os.ReadDir("/proc")
+	for _, procEntry := range procDirEntries {
+		if isNumber(procEntry.Name()) {
+			numericProcessIds = append(numericProcessIds, mustParseInt(procEntry.Name()))
+		}
+	}
+	return numericProcessIds
 }
 
 var targetTCPStates = map[int]bool{
