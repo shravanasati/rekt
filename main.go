@@ -48,9 +48,9 @@ func main() {
 				return exitError(err)
 			}
 
-			if len(pids) > 1 {
-				fmt.Printf("detected %d processes occupying %d, likely SO_REUSEPORT\n", len(pids), port)
-			}
+			// if len(pids) > 1 {
+			// 	fmt.Printf("detected %d processes occupying %d, likely SO_REUSEPORT\n", len(pids), port)
+			// }
 			for _, pid := range pids {
 				fmt.Printf("port %v -> pid %v\n", port, pid)
 			}
