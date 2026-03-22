@@ -13,6 +13,10 @@ import (
 var errPortRequired = errors.New("port argument is required")
 var errInvalidPort = errors.New("port must lie between 1 and 65535")
 
+func exitError(e error) error {
+	return cli.Exit(e, 1)
+}
+
 // todo rekt list -> list all processes occupying a port
 
 func main() {
@@ -31,17 +35,17 @@ func main() {
 		Action: func(ctx context.Context, c *cli.Command) error {
 			port := c.IntArg("port")
 			if port == 0 {
-				return errPortRequired
+				return exitError(errPortRequired)
 			}
 
 			if port < 1 || port > 65535 {
-				return errInvalidPort
+				return exitError(errInvalidPort)
 			}
 
 			pf := internal.NewProcessFinder()
 			pids, err := (pf.FindPIDByPort(port))
 			if err != nil {
-				return err
+				return exitError(err)
 			}
 
 			if len(pids) > 1 {
@@ -81,7 +85,11 @@ func main() {
 				}
 			}
 
-			return errors.Join(slayErrors...)
+			err = errors.Join(slayErrors...)
+			if err != nil {
+				return exitError(err)
+			}
+			return nil
 		},
 	}
 
