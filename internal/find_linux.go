@@ -5,11 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var ErrPIDNotFound = errors.New("no process owner found for this port")
+
+const maxPIDScanWorkers = 16
 
 type linuxProcessFinder struct{}
 
@@ -32,30 +36,114 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int) (int, error) {
 	}
 
 	numericProcessIds := getNumericPIDs()
+	if len(numericProcessIds) == 0 {
+		return 0, ErrPIDNotFound
+	}
 
-	for _, pid := range numericProcessIds {
-		procFdsPath := "/proc/" + strconv.Itoa(pid) + "/fd"
-		procFds, err := (os.ReadDir(procFdsPath))
-		if err != nil {
-			continue
-		}
-		for _, fd := range procFds {
-			fdPath := procFdsPath + "/" + fd.Name()
-			linkTarget, err := os.Readlink(fdPath)
-			if err != nil {
-				continue
-			}
-			inode, ok := parseSocketInode(linkTarget)
-			if !ok {
-				continue // not a socket fd
-			}
-			if _, ok := allInodes[inode]; ok {
-				return pid, nil
+	workerCount := runtime.GOMAXPROCS(0)
+	if workerCount > maxPIDScanWorkers {
+		workerCount = maxPIDScanWorkers
+	}
+	if workerCount > len(numericProcessIds) {
+		workerCount = len(numericProcessIds)
+	}
+	if workerCount < 1 {
+		workerCount = 1
+	}
+
+	jobs := make(chan int)
+	result := make(chan int, 1)
+	done := make(chan struct{})
+
+	var closeDoneOnce sync.Once
+	cancel := func() {
+		closeDoneOnce.Do(func() {
+			close(done)
+		})
+	}
+
+	var wg sync.WaitGroup
+	worker := func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			case pid, ok := <-jobs:
+				if !ok {
+					return
+				}
+				if pidOwnsAnyTargetInode(pid, allInodes, done) {
+					select {
+					case result <- pid:
+						cancel()
+					default:
+					}
+					return
+				}
 			}
 		}
 	}
 
+	wg.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go worker()
+	}
+
+	go func() {
+		wg.Wait()
+		close(result)
+	}()
+
+	sendLoopActive := true
+	for _, pid := range numericProcessIds {
+		if !sendLoopActive {
+			break
+		}
+		select {
+		case <-done:
+			sendLoopActive = false
+		case jobs <- pid:
+		}
+	}
+	close(jobs)
+
+	if pid, ok := <-result; ok {
+		return pid, nil
+	}
+
 	return 0, ErrPIDNotFound
+}
+
+func pidOwnsAnyTargetInode(pid int, targetInodes map[int]struct{}, done <-chan struct{}) bool {
+	procFdsPath := "/proc/" + strconv.Itoa(pid) + "/fd"
+	procFds, err := os.ReadDir(procFdsPath)
+	if err != nil {
+		return false
+	}
+
+	for _, fd := range procFds {
+		select {
+		case <-done:
+			return false
+		default:
+		}
+
+		fdPath := procFdsPath + "/" + fd.Name()
+		linkTarget, err := os.Readlink(fdPath)
+		if err != nil {
+			continue
+		}
+		inode, ok := parseSocketInode(linkTarget)
+		if !ok {
+			continue // not a socket fd
+		}
+		if _, ok := targetInodes[inode]; ok {
+			return true
+		}
+	}
+
+	return false
 }
 
 func getActiveInodes(netFiles []string, port int) map[int]struct{} {
@@ -164,15 +252,6 @@ func mustParseInt(n string) int {
 	}
 
 	return converted
-}
-
-func isNumber(s string) bool {
-	_, err := strconv.Atoi(s)
-	if err != nil {
-		return false
-	}
-
-	return true
 }
 
 // parses an individual line from a net file.
