@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,7 +19,7 @@ const maxPIDScanWorkers = 16
 type linuxProcessFinder struct{}
 
 // Returns the process' PID holding the port.
-func (pf *linuxProcessFinder) FindPIDByPort(port int) (int, error) {
+func (pf *linuxProcessFinder) FindPIDByPort(port int) ([]int, error) {
 	if os.Getuid() != 0 {
 		fmt.Println("warning: not running as root, may miss processes owned by other users")
 	}
@@ -32,12 +33,12 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int) (int, error) {
 
 	allInodes := getActiveInodes(netFiles, port)
 	if len(allInodes) == 0 {
-		return 0, ErrPIDNotFound
+		return nil, ErrPIDNotFound
 	}
 
 	numericProcessIds := getNumericPIDs()
 	if len(numericProcessIds) == 0 {
-		return 0, ErrPIDNotFound
+		return nil, ErrPIDNotFound
 	}
 
 	workerCount := runtime.GOMAXPROCS(0)
@@ -52,35 +53,14 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int) (int, error) {
 	}
 
 	jobs := make(chan int)
-	result := make(chan int, 1)
-	done := make(chan struct{})
-
-	var closeDoneOnce sync.Once
-	cancel := func() {
-		closeDoneOnce.Do(func() {
-			close(done)
-		})
-	}
+	results := make(chan int, workerCount)
 
 	var wg sync.WaitGroup
 	worker := func() {
 		defer wg.Done()
-		for {
-			select {
-			case <-done:
-				return
-			case pid, ok := <-jobs:
-				if !ok {
-					return
-				}
-				if pidOwnsAnyTargetInode(pid, allInodes, done) {
-					select {
-					case result <- pid:
-						cancel()
-					default:
-					}
-					return
-				}
+		for pid := range jobs {
+			if pidOwnsAnyTargetInode(pid, allInodes) {
+				results <- pid
 			}
 		}
 	}
@@ -92,30 +72,28 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int) (int, error) {
 
 	go func() {
 		wg.Wait()
-		close(result)
+		close(results)
 	}()
 
-	sendLoopActive := true
 	for _, pid := range numericProcessIds {
-		if !sendLoopActive {
-			break
-		}
-		select {
-		case <-done:
-			sendLoopActive = false
-		case jobs <- pid:
-		}
+		jobs <- pid
 	}
 	close(jobs)
 
-	if pid, ok := <-result; ok {
-		return pid, nil
+	pids := []int{}
+	for pid := range results {
+		pids = append(pids, pid)
 	}
 
-	return 0, ErrPIDNotFound
+	if len(pids) > 0 {
+		sort.Ints(pids)
+		return pids, nil
+	}
+
+	return nil, ErrPIDNotFound
 }
 
-func pidOwnsAnyTargetInode(pid int, targetInodes map[int]struct{}, done <-chan struct{}) bool {
+func pidOwnsAnyTargetInode(pid int, targetInodes map[int]struct{}) bool {
 	procFdsPath := "/proc/" + strconv.Itoa(pid) + "/fd"
 	procFds, err := os.ReadDir(procFdsPath)
 	if err != nil {
@@ -123,12 +101,6 @@ func pidOwnsAnyTargetInode(pid int, targetInodes map[int]struct{}, done <-chan s
 	}
 
 	for _, fd := range procFds {
-		select {
-		case <-done:
-			return false
-		default:
-		}
-
 		fdPath := procFdsPath + "/" + fd.Name()
 		linkTarget, err := os.Readlink(fdPath)
 		if err != nil {

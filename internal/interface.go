@@ -1,7 +1,7 @@
 package internal
 
 type ProcessFinder interface {
-	FindPIDByPort(port int) (int, error)
+	FindPIDByPort(port int) ([]int, error)
 }
 
 type KillMode int

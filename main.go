@@ -14,7 +14,6 @@ var errPortRequired = errors.New("port argument is required")
 var errInvalidPort = errors.New("port must lie between 1 and 65535")
 
 // todo rekt list -> list all processes occupying a port
-// todo handle edge cases like SO_REUSEPORT
 
 func main() {
 	cmd := &cli.Command{
@@ -40,12 +39,17 @@ func main() {
 			}
 
 			pf := internal.NewProcessFinder()
-			pid, err := (pf.FindPIDByPort(port))
+			pids, err := (pf.FindPIDByPort(port))
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("port %v -> pid %v\n", port, pid)
+			if len(pids) > 1 {
+				fmt.Printf("detected %d processes occupying %d, likely SO_REUSEPORT\n", len(pids), port)
+			}
+			for _, pid := range pids {
+				fmt.Printf("port %v -> pid %v\n", port, pid)
+			}
 
 			killFlag := c.Bool("kill")
 			terminateFlag := c.Bool("terminate")
@@ -59,14 +63,25 @@ func main() {
 			}
 
 			ps := internal.NewProcessSlayer()
+			slayErrors := []error{}
 			switch killmode {
 			case internal.ModeTerm:
-				return ps.TermProcess(pid)
+				for _, pid := range pids {
+					err := ps.TermProcess(pid)
+					if err != nil {
+						slayErrors = append(slayErrors, err)
+					}
+				}
 			case internal.ModeKill:
-				return ps.KillProcess(pid)
+				for _, pid := range pids {
+					err := ps.KillProcess(pid)
+					if err != nil {
+						slayErrors = append(slayErrors, err)
+					}
+				}
 			}
 
-			return nil
+			return errors.Join(slayErrors...)
 		},
 	}
 
