@@ -27,25 +27,29 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int) (int, error) {
 	}
 
 	allInodes := getActiveInodes(netFiles, port)
+	if len(allInodes) == 0 {
+		return 0, ErrPIDNotFound
+	}
+
 	numericProcessIds := getNumericPIDs()
 
 	for _, pid := range numericProcessIds {
-		procFdsPath := fmt.Sprintf("/proc/%d/fd", pid)
+		procFdsPath := "/proc/" + strconv.Itoa(pid) + "/fd"
 		procFds, err := (os.ReadDir(procFdsPath))
 		if err != nil {
 			continue
 		}
 		for _, fd := range procFds {
-			linkTarget, err := os.Readlink(fmt.Sprintf("%s/%s", procFdsPath, fd.Name()))
+			fdPath := procFdsPath + "/" + fd.Name()
+			linkTarget, err := os.Readlink(fdPath)
 			if err != nil {
 				continue
 			}
-			// linkTarget looks like "socket:[12345]"
-			var inode int
-			if _, err := fmt.Sscanf(linkTarget, "socket:[%d]", &inode); err != nil {
+			inode, ok := parseSocketInode(linkTarget)
+			if !ok {
 				continue // not a socket fd
 			}
-			if allInodes[inode] {
+			if _, ok := allInodes[inode]; ok {
 				return pid, nil
 			}
 		}
@@ -54,8 +58,8 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int) (int, error) {
 	return 0, ErrPIDNotFound
 }
 
-func getActiveInodes(netFiles []string, port int) map[int]bool {
-	allInodes := map[int]bool{}
+func getActiveInodes(netFiles []string, port int) map[int]struct{} {
+	allInodes := map[int]struct{}{}
 
 	for _, netFile := range netFiles {
 		inodes, err := parseNetFile(netFile, port)
@@ -65,7 +69,7 @@ func getActiveInodes(netFiles []string, port int) map[int]bool {
 		}
 
 		for _, inode := range inodes {
-			allInodes[inode] = true
+			allInodes[inode] = struct{}{}
 		}
 	}
 
@@ -74,20 +78,18 @@ func getActiveInodes(netFiles []string, port int) map[int]bool {
 
 func getNumericPIDs() []int {
 	numericProcessIds := []int{}
-	procDirEntries, _ := os.ReadDir("/proc")
+	procDirEntries, err := os.ReadDir("/proc")
+	if err != nil {
+		fmt.Printf("error reading /proc: %v\n", err)
+		return []int{}
+	}
 	for _, procEntry := range procDirEntries {
-		if isNumber(procEntry.Name()) {
-			numericProcessIds = append(numericProcessIds, mustParseInt(procEntry.Name()))
+		n, err := strconv.Atoi(procEntry.Name())
+		if err == nil {
+			numericProcessIds = append(numericProcessIds, n)
 		}
 	}
 	return numericProcessIds
-}
-
-var targetTCPStates = map[int]bool{
-	0x01: true, // ESTABLISHED
-	0x02: true, // SYN_SENT
-	0x0A: true, // LISTEN
-	0x08: true, // CLOSE_WAIT
 }
 
 // parses an entire net file and returns all matching inodes.
@@ -112,7 +114,13 @@ func parseNetFile(netfilepath string, port int) ([]int, error) {
 		netEntry := parseNetLine(line)
 		if isTcpFile {
 			// only target certain states in the tcp table
-			if _, ok := targetTCPStates[netEntry.st]; !ok {
+			shouldContinue := true
+			switch netEntry.st {
+			// ESTABLISHED, SYN_SENT, LISTEN, CLOSE_WAIT
+			case 0x01, 0x02, 0x0A, 0x08:
+				shouldContinue = false
+			}
+			if shouldContinue {
 				continue
 			}
 		}
@@ -188,6 +196,21 @@ func parseNetLine(line string) *netLineEntry {
 		st:            state,
 		inode:         inode,
 	}
+}
+
+func parseSocketInode(linkTarget string) (int, bool) {
+	const socketPrefix = "socket:["
+	if !strings.HasPrefix(linkTarget, socketPrefix) || !strings.HasSuffix(linkTarget, "]") {
+		return 0, false
+	}
+
+	inodeStr := linkTarget[len(socketPrefix) : len(linkTarget)-1]
+	inode, err := strconv.Atoi(inodeStr)
+	if err != nil {
+		return 0, false
+	}
+
+	return inode, true
 }
 
 // NewProcessFinder returns an instance of [linuxProcessFinder],
