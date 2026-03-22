@@ -25,7 +25,7 @@ func (ps *linuxProcessSlayer) TermProcess(pid int) error {
 	time.Sleep(500 * time.Millisecond)
 	if err := sendProcessSignal(pid, syscall.Signal(0)); err == nil {
 		// process still exists
-		fmt.Printf("pid %d still running after 500ms, retry with --kill/-k to force\n", pid)
+		return fmt.Errorf("pid %d still running after 500ms, retry with --kill/-k to force\n", pid)
 	}
 	return err
 }

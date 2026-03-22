@@ -61,9 +61,9 @@ func main() {
 			ps := internal.NewProcessSlayer()
 			switch killmode {
 			case internal.ModeTerm:
-				ps.TermProcess(pid)
+				return ps.TermProcess(pid)
 			case internal.ModeKill:
-				ps.KillProcess(pid)
+				return ps.KillProcess(pid)
 			}
 
 			return nil
