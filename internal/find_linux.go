@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/user"
 	"runtime"
 	"sort"
 	"strconv"
@@ -19,7 +21,7 @@ const maxPIDScanWorkers = 16
 type linuxProcessFinder struct{}
 
 // Returns the process' PID holding the port.
-func (pf *linuxProcessFinder) FindPIDByPort(port int) ([]int, error) {
+func (pf *linuxProcessFinder) FindPIDByPort(port int, verbose bool) ([]*Process, error) {
 	if os.Getuid() != 0 {
 		fmt.Println("warning: not running as root, may miss processes owned by other users")
 	}
@@ -53,14 +55,16 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int) ([]int, error) {
 	}
 
 	jobs := make(chan int)
-	results := make(chan int, workerCount)
+	results := make(chan *Process, workerCount)
 
 	var wg sync.WaitGroup
 	worker := func() {
 		defer wg.Done()
 		for pid := range jobs {
-			if pidOwnsAnyTargetInode(pid, allInodes) {
-				results <- pid
+			owned, netfile := pidOwnsAnyTargetInode(pid, allInodes)
+			if owned {
+				netfile, _ = strings.CutPrefix(netfile, "/proc/net/")
+				results <- &Process{PID: pid, Type: netfile}
 			}
 		}
 	}
@@ -80,24 +84,92 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int) ([]int, error) {
 	}
 	close(jobs)
 
-	pids := []int{}
-	for pid := range results {
-		pids = append(pids, pid)
+	processes := []*Process{}
+	for process := range results {
+		if verbose {
+			readProcessInfo(process)
+		}
+		processes = append(processes, process)
 	}
 
-	if len(pids) > 0 {
-		sort.Ints(pids)
-		return pids, nil
+	if len(processes) > 0 {
+		sort.Slice(processes, func(i, j int) bool {
+			return processes[i].PID < processes[j].PID
+		})
+		return processes, nil
 	}
 
 	return nil, ErrPIDNotFound
 }
 
-func pidOwnsAnyTargetInode(pid int, targetInodes map[int]struct{}) bool {
+func readProcessInfo(process *Process) {
+	statusFile, err := os.Open("/proc/" + strconv.Itoa(process.PID) + "/status")
+	if err != nil {
+		fmt.Printf("error reading /proc/%d/status: %v\n", process.PID, err)
+		return
+	}
+	defer statusFile.Close()
+
+	// read name
+	reader := bufio.NewReader(statusFile)
+	foundName, foundUser := false, false
+	for !foundName || !foundUser {
+		key, err := reader.ReadString(':')
+		if err != nil && err != io.EOF {
+			fmt.Printf("error reading /proc/%d/status: %v\n", process.PID, err)
+			return
+		}
+		value, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Printf("error reading /proc/%d/status: %v\n", process.PID, err)
+			return
+		}
+		key = key[:len(key)-1]
+		value = value[:len(value)-1]
+		// fmt.Printf("key=`%v`\n", key)
+		// fmt.Printf("value=`%v`\n", value)
+
+		switch key {
+		case "Name":
+			foundName = true
+			process.Name = strings.TrimSpace(value)
+		case "Uid":
+			foundUser = true
+			usr, err := user.LookupId(parseUidString(value))
+			if err != nil {
+				fmt.Printf("error looking up uid=%v: %v\n", value, err)
+				return
+			}
+			process.User = usr.Name
+		}
+
+	}
+}
+
+func parseUidString(s string) string {
+	// looks like
+	// ` 1000 1000 1000`
+	uid := ""
+	numberStarted := false
+	for _, v := range s {
+		isNotNumber := v < '0' || v > '9'
+		if isNotNumber && !numberStarted {
+			continue
+		}
+		if isNotNumber {
+			return uid
+		}
+		numberStarted = true
+		uid += string(v)
+	}
+	return uid
+}
+
+func pidOwnsAnyTargetInode(pid int, targetInodes map[int]string) (bool, string) {
 	procFdsPath := "/proc/" + strconv.Itoa(pid) + "/fd"
 	procFds, err := os.ReadDir(procFdsPath)
 	if err != nil {
-		return false
+		return false, ""
 	}
 
 	for _, fd := range procFds {
@@ -110,16 +182,16 @@ func pidOwnsAnyTargetInode(pid int, targetInodes map[int]struct{}) bool {
 		if !ok {
 			continue // not a socket fd
 		}
-		if _, ok := targetInodes[inode]; ok {
-			return true
+		if val, ok := targetInodes[inode]; ok {
+			return true, val
 		}
 	}
 
-	return false
+	return false, ""
 }
 
-func getActiveInodes(netFiles []string, port int) map[int]struct{} {
-	allInodes := map[int]struct{}{}
+func getActiveInodes(netFiles []string, port int) map[int]string {
+	allInodes := make(map[int]string, 0)
 
 	for _, netFile := range netFiles {
 		inodes, err := parseNetFile(netFile, port)
@@ -129,7 +201,7 @@ func getActiveInodes(netFiles []string, port int) map[int]struct{} {
 		}
 
 		for _, inode := range inodes {
-			allInodes[inode] = struct{}{}
+			allInodes[inode] = netFile
 		}
 	}
 

@@ -37,6 +37,7 @@ func main() {
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "kill", Aliases: []string{"k"}, Usage: "Force kill the process."},
 			&cli.BoolFlag{Name: "terminate", Aliases: []string{"t"}, Usage: "Terminate the process (has same behavior as kill on Windows)."},
+			&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "Show verbose output."},
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
 			port := c.IntArg("port")
@@ -48,17 +49,22 @@ func main() {
 				return exitError(errInvalidPort)
 			}
 
+			verbose := c.Bool("verbose")
+
 			pf := internal.NewProcessFinder()
-			pids, err := (pf.FindPIDByPort(port))
+			processes, err := (pf.FindPIDByPort(port, verbose))
 			if err != nil {
 				return exitError(err)
 			}
 
-			// if len(pids) > 1 {
-			// 	fmt.Printf("detected %d processes occupying %d, likely SO_REUSEPORT\n", len(pids), port)
-			// }
-			for _, pid := range pids {
-				fmt.Printf("port %v -> pid %v\n", port, pid)
+			if verbose {
+				for _, process := range processes {
+					fmt.Printf("port %v -> pid %v (`%v`, %v) owned by '%v'\n", port, process.PID, process.Name, process.Type, process.User)
+				}
+			} else {
+				for _, process := range processes {
+					fmt.Printf("port %v -> pid %v\n", port, process.PID)
+				}
 			}
 
 			killFlag := c.Bool("kill")
@@ -74,20 +80,18 @@ func main() {
 
 			ps := internal.NewProcessSlayer()
 			slayErrors := []error{}
+			var slayMethod func (int) error
 			switch killmode {
 			case internal.ModeTerm:
-				for _, pid := range pids {
-					err := ps.TermProcess(pid)
-					if err != nil {
-						slayErrors = append(slayErrors, err)
-					}
-				}
+				slayMethod = ps.TermProcess
 			case internal.ModeKill:
-				for _, pid := range pids {
-					err := ps.KillProcess(pid)
-					if err != nil {
-						slayErrors = append(slayErrors, err)
-					}
+				slayMethod = ps.KillProcess
+			}
+
+			for _, pid := range processes {
+				err := slayMethod(pid.PID)
+				if err != nil {
+					slayErrors = append(slayErrors, err)
 				}
 			}
 
