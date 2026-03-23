@@ -5,6 +5,7 @@ import (
 	"sort"
 	"syscall"
 	"unsafe"
+	"golang.org/x/sys/windows"
 )
 
 var ErrPIDNotFound = fmt.Errorf("no process owner found for this port")
@@ -61,10 +62,11 @@ type mibUDP6RowOwnerPID struct {
 
 type windowsProcessFinder struct{}
 
-func (pf *windowsProcessFinder) FindPIDByPort(port int) ([]int, error) {
-	foundPIDs := map[int]struct{}{}
+func (pf *windowsProcessFinder) FindPIDByPort(port int, verbose bool) ([]*Process, error) {
+	// map of pid -> type (udp/udp6/tcp/tcp6)
+	foundPIDs := map[int]string{}
 
-	collectors := []func(int, map[int]struct{}) error{
+	collectors := []func(int, map[int]string) error{
 		collectTCP4PIDs,
 		collectTCP6PIDs,
 		collectUDP4PIDs,
@@ -81,16 +83,53 @@ func (pf *windowsProcessFinder) FindPIDByPort(port int) ([]int, error) {
 		return nil, ErrPIDNotFound
 	}
 
-	pids := make([]int, 0, len(foundPIDs))
+	processes := make([]*Process, 0, len(foundPIDs))
 	for pid := range foundPIDs {
-		pids = append(pids, pid)
+		pr := &Process{PID: pid, Type: foundPIDs[pid]}
+		if verbose {
+			readProcessInfo(pr)
+		}
+		processes = append(processes, pr)
 	}
-	sort.Ints(pids)
+	sort.Slice(processes, func(i, j int) bool {
+		return processes[i].PID < processes[j].PID
+	})
 
-	return pids, nil
+	return processes, nil
 }
 
-func collectTCP4PIDs(targetPort int, foundPIDs map[int]struct{}) error {
+func readProcessInfo(pr *Process) {
+    handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pr.PID))
+    if err != nil {
+		fmt.Printf("error in opening process: %v\n", err)
+        return 
+    }
+    defer windows.CloseHandle(handle)
+
+    // executable path
+	buf := make([]uint16, windows.MAX_PATH)
+	exeSize := uint32(len(buf))
+    err = windows.QueryFullProcessImageName(handle, 0, &buf[0], &exeSize) 
+	if err == nil {
+		pr.Name = windows.UTF16ToString(buf[:exeSize])
+    } else {
+		fmt.Printf("error in query process image name: %v\n", err)
+	}
+
+    // owner
+    var token windows.Token
+    if err := windows.OpenProcessToken(handle, windows.TOKEN_QUERY, &token); err == nil {
+        defer token.Close()
+        if user, err := token.GetTokenUser(); err == nil {
+            account, domain, _, err := user.User.Sid.LookupAccount("")
+            if err == nil {
+                pr.User = domain + `\` + account
+            }
+        }
+    }
+}
+
+func collectTCP4PIDs(targetPort int, foundPIDs map[int]string) error {
 	table, err := getExtendedTable(procGetExtendedTCPTable, afInet, tcpTableOwnerPIDAll)
 	if err != nil {
 		return err
@@ -106,14 +145,14 @@ func collectTCP4PIDs(targetPort int, foundPIDs map[int]struct{}) error {
 	for i := uint32(0); i < entryCount; i++ {
 		row := (*mibTCPRowOwnerPID)(unsafe.Pointer(base + uintptr(i)*rowSize))
 		if dwordPortToHostOrder(row.localPort) == targetPort {
-			foundPIDs[int(row.owningPID)] = struct{}{}
+			foundPIDs[int(row.owningPID)] = "tcp"
 		}
 	}
 
 	return nil
 }
 
-func collectTCP6PIDs(targetPort int, foundPIDs map[int]struct{}) error {
+func collectTCP6PIDs(targetPort int, foundPIDs map[int]string) error {
 	table, err := getExtendedTable(procGetExtendedTCPTable, afInet6, tcpTableOwnerPIDAll)
 	if err != nil {
 		return err
@@ -129,14 +168,14 @@ func collectTCP6PIDs(targetPort int, foundPIDs map[int]struct{}) error {
 	for i := uint32(0); i < entryCount; i++ {
 		row := (*mibTCP6RowOwnerPID)(unsafe.Pointer(base + uintptr(i)*rowSize))
 		if dwordPortToHostOrder(row.localPort) == targetPort {
-			foundPIDs[int(row.owningPID)] = struct{}{}
+			foundPIDs[int(row.owningPID)] = "tcp6"
 		}
 	}
 
 	return nil
 }
 
-func collectUDP4PIDs(targetPort int, foundPIDs map[int]struct{}) error {
+func collectUDP4PIDs(targetPort int, foundPIDs map[int]string) error {
 	table, err := getExtendedTable(procGetExtendedUDPTable, afInet, udpTableOwnerPID)
 	if err != nil {
 		return err
@@ -152,14 +191,14 @@ func collectUDP4PIDs(targetPort int, foundPIDs map[int]struct{}) error {
 	for i := uint32(0); i < entryCount; i++ {
 		row := (*mibUDPRowOwnerPID)(unsafe.Pointer(base + uintptr(i)*rowSize))
 		if dwordPortToHostOrder(row.localPort) == targetPort {
-			foundPIDs[int(row.owningPID)] = struct{}{}
+			foundPIDs[int(row.owningPID)] = "udp"
 		}
 	}
 
 	return nil
 }
 
-func collectUDP6PIDs(targetPort int, foundPIDs map[int]struct{}) error {
+func collectUDP6PIDs(targetPort int, foundPIDs map[int]string) error {
 	table, err := getExtendedTable(procGetExtendedUDPTable, afInet6, udpTableOwnerPID)
 	if err != nil {
 		return err
@@ -175,7 +214,7 @@ func collectUDP6PIDs(targetPort int, foundPIDs map[int]struct{}) error {
 	for i := uint32(0); i < entryCount; i++ {
 		row := (*mibUDP6RowOwnerPID)(unsafe.Pointer(base + uintptr(i)*rowSize))
 		if dwordPortToHostOrder(row.localPort) == targetPort {
-			foundPIDs[int(row.owningPID)] = struct{}{}
+			foundPIDs[int(row.owningPID)] = "udp6"
 		}
 	}
 
