@@ -27,6 +27,7 @@ func main() {
 	cmd := &cli.Command{
 		Name:  "rekt",
 		Usage: "slay the evil process holding your port hostage",
+		Description: "Find the process occupying a port\n$ rekt 8000\n\nKill or terminate the process\n$ rekt 8000 -k (or -t)",
 		Arguments: []cli.Argument{
 			&cli.IntArg{
 				Name:      "port",
