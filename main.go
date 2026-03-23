@@ -10,6 +10,12 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 var errPortRequired = errors.New("port argument is required")
 var errInvalidPort = errors.New("port must lie between 1 and 65535")
 
@@ -23,7 +29,7 @@ func main() {
 		Usage: "slay the evil process holding your port hostage",
 		Arguments: []cli.Argument{
 			&cli.IntArg{
-				Name: "port",
+				Name:      "port",
 				UsageText: "The port to free.",
 			},
 		},
@@ -90,6 +96,15 @@ func main() {
 			}
 			return nil
 		},
+
+		Commands: []*cli.Command{{
+			Name:  "version",
+			Usage: "Print version information.",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				fmt.Printf("rotom %s (commit: %s, built at: %s)\n", version, commit, date)
+				return nil
+			},
+		}},
 	}
 
 	if err := cmd.Run(context.Background(), os.Args); err != nil {
