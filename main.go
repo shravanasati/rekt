@@ -17,20 +17,19 @@ func exitError(e error) error {
 	return cli.Exit(e, 1)
 }
 
-// todo rekt list -> list all processes occupying a port
-
 func main() {
 	cmd := &cli.Command{
 		Name:  "rekt",
-		Usage: "slay the evil pid holding your port hostage",
+		Usage: "slay the evil process holding your port hostage",
 		Arguments: []cli.Argument{
 			&cli.IntArg{
 				Name: "port",
+				UsageText: "The port to free.",
 			},
 		},
 		Flags: []cli.Flag{
-			&cli.BoolFlag{Name: "kill", Aliases: []string{"k"}},
-			&cli.BoolFlag{Name: "terminate", Aliases: []string{"t"}},
+			&cli.BoolFlag{Name: "kill", Aliases: []string{"k"}, Usage: "Force kill the process."},
+			&cli.BoolFlag{Name: "terminate", Aliases: []string{"t"}, Usage: "Terminate the process (has same behavior as kill on Windows)."},
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
 			port := c.IntArg("port")
