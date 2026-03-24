@@ -112,7 +112,7 @@ func main() {
 			Name:  "version",
 			Usage: "Print version information.",
 			Action: func(ctx context.Context, c *cli.Command) error {
-				fmt.Printf("rotom %s (commit: %s, built at: %s)\n", version, commit, date)
+				fmt.Printf("rekt %s (commit: %s, built at: %s)\n", version, commit, date)
 				return nil
 			},
 		}},
