@@ -14,7 +14,10 @@ import (
 	"sync"
 )
 
-var ErrPIDNotFound = errors.New("no process owner found for this port")
+var (
+	ErrPIDNotFound      = errors.New("no process owner found for this port")
+	ErrInvalidHexString = errors.New("invalid hex string")
+)
 
 const maxPIDScanWorkers = 16
 
@@ -55,7 +58,7 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int, verbose bool) ([]*Process,
 	}
 
 	jobs := make(chan int)
-	results := make(chan *Process, workerCount)
+	results := make(chan *Process)
 
 	var wg sync.WaitGroup
 	worker := func() {
@@ -79,15 +82,18 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int, verbose bool) ([]*Process,
 		close(results)
 	}()
 
-	for _, pid := range numericProcessIds {
-		jobs <- pid
-	}
-	close(jobs)
+	go func() {
+		defer close(jobs)
+		for _, pid := range numericProcessIds {
+			jobs <- pid
+		}
+	}()
 
 	processes := []*Process{}
+	uidToUserCache := map[string]string{}
 	for process := range results {
 		if verbose {
-			readProcessInfo(process)
+			readProcessInfo(process, uidToUserCache)
 		}
 		processes = append(processes, process)
 	}
@@ -102,7 +108,7 @@ func (pf *linuxProcessFinder) FindPIDByPort(port int, verbose bool) ([]*Process,
 	return nil, ErrPIDNotFound
 }
 
-func readProcessInfo(process *Process) {
+func readProcessInfo(process *Process, uidToUserCache map[string]string) {
 	statusFile, err := os.Open("/proc/" + strconv.Itoa(process.PID) + "/status")
 	if err != nil {
 		fmt.Printf("error reading /proc/%d/status: %v\n", process.PID, err)
@@ -135,34 +141,30 @@ func readProcessInfo(process *Process) {
 			process.Name = strings.TrimSpace(value)
 		case "Uid":
 			foundUser = true
-			usr, err := user.LookupId(parseUidString(value))
+			uid := parseUidString(value)
+			if cachedUser, ok := uidToUserCache[uid]; ok {
+				process.User = cachedUser
+				break
+			}
+
+			usr, err := user.LookupId(uid)
 			if err != nil {
 				fmt.Printf("error looking up uid=%v: %v\n", value, err)
 				return
 			}
-			process.User = usr.Name
+			process.User = usr.Username
+			uidToUserCache[uid] = usr.Username
 		}
 
 	}
 }
 
 func parseUidString(s string) string {
-	// looks like
-	// ` 1000 1000 1000`
-	uid := ""
-	numberStarted := false
-	for _, v := range s {
-		isNotNumber := v < '0' || v > '9'
-		if isNotNumber && !numberStarted {
-			continue
-		}
-		if isNotNumber {
-			return uid
-		}
-		numberStarted = true
-		uid += string(v)
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return ""
 	}
-	return uid
+	return fields[0]
 }
 
 func pidOwnsAnyTargetInode(pid int, targetInodes map[int]string) (bool, string) {
@@ -243,7 +245,10 @@ func parseNetFile(netfilepath string, port int) ([]int, error) {
 			isHeaderLine = false
 			continue
 		}
-		netEntry := parseNetLine(line)
+		netEntry, ok := parseNetLine(line)
+		if !ok {
+			continue
+		}
 		if isTcpFile {
 			// only target certain states in the tcp table
 			shouldContinue := true
@@ -277,48 +282,48 @@ type netLineEntry struct {
 	inode         int
 }
 
-// converts a hex string to integer. panics if it fails. choosing panic behavior because
-// we can assume the kernel always returns valid hex strings
-func mustHexToInt(n string) int {
+// converts a hex string to integer.
+func hexToInt(n string) (int, error) {
 	converted, err := strconv.ParseInt(n, 16, 0)
 	if err != nil {
-		panic(err)
+		return 0, ErrInvalidHexString
 	}
-	return int(converted)
-}
-
-// converts a string to integer. panics if it fails. choosing panic behavior because
-// we can assume the kernel always returns valid numeric strings
-func mustParseInt(n string) int {
-	converted, err := strconv.Atoi(n)
-	if err != nil {
-		panic(err)
-	}
-
-	return converted
+	return int(converted), nil
 }
 
 // parses an individual line from a net file.
-func parseNetLine(line string) *netLineEntry {
+func parseNetLine(line string) (netLineEntry, bool) {
 	splitted := strings.Fields(line)
 
 	local_address := splitted[1]
 
 	portStr := strings.Split(local_address, ":")[1]
-	port := mustHexToInt(portStr)
+	port, err := hexToInt(portStr)
+	if err != nil {
+		fmt.Printf("error parsing net line `%s`: %v\n", line, err)
+		return netLineEntry{}, false
+	}
 
 	stateStr := splitted[3]
-	state := mustHexToInt(stateStr)
+	state, err := hexToInt(stateStr)
+	if err != nil {
+		fmt.Printf("error parsing net line `%s`: %v\n", line, err)
+		return netLineEntry{}, false
+	}
 
 	inodeStr := splitted[9]
-	inode := mustParseInt(inodeStr)
+	inode, err := strconv.Atoi(inodeStr)
+	if err != nil {
+		fmt.Printf("error parsing net line `%s`: %v\n", line, err)
+		return netLineEntry{}, false
+	}
 
-	return &netLineEntry{
+	return netLineEntry{
 		local_address: local_address,
 		port:          port,
 		st:            state,
 		inode:         inode,
-	}
+	}, true
 }
 
 func parseSocketInode(linkTarget string) (int, bool) {

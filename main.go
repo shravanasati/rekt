@@ -26,9 +26,10 @@ func exitError(e error) error {
 
 func main() {
 	cmd := &cli.Command{
-		Name:        "rekt",
-		Usage:       "slay the evil process holding your port hostage",
-		Description: "Find the process occupying a port\n$ rekt 8000 (-v for verbose output)\n\nKill or terminate the process\n$ rekt 8000 -k (or -t)",
+		Name:                   "rekt",
+		Usage:                  "slay the evil process holding your port hostage",
+		Description:            "Find the process occupying a port\n$ rekt 8000 (-v for verbose output)\n\nKill or terminate the process\n$ rekt 8000 -k (or -t)",
+		UseShortOptionHandling: true,
 		Arguments: []cli.Argument{
 			&cli.IntArg{
 				Name:      "port",

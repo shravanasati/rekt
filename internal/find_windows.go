@@ -2,10 +2,10 @@ package internal
 
 import (
 	"fmt"
+	"golang.org/x/sys/windows"
 	"sort"
 	"syscall"
 	"unsafe"
-	"golang.org/x/sys/windows"
 )
 
 var ErrPIDNotFound = fmt.Errorf("no process owner found for this port")
@@ -99,34 +99,34 @@ func (pf *windowsProcessFinder) FindPIDByPort(port int, verbose bool) ([]*Proces
 }
 
 func readProcessInfo(pr *Process) {
-    handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pr.PID))
-    if err != nil {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pr.PID))
+	if err != nil {
 		fmt.Printf("error in opening process: %v\n", err)
-        return 
-    }
-    defer windows.CloseHandle(handle)
+		return
+	}
+	defer windows.CloseHandle(handle)
 
-    // executable path
+	// executable path
 	buf := make([]uint16, windows.MAX_PATH)
 	exeSize := uint32(len(buf))
-    err = windows.QueryFullProcessImageName(handle, 0, &buf[0], &exeSize) 
+	err = windows.QueryFullProcessImageName(handle, 0, &buf[0], &exeSize)
 	if err == nil {
 		pr.Name = windows.UTF16ToString(buf[:exeSize])
-    } else {
+	} else {
 		fmt.Printf("error in query process image name: %v\n", err)
 	}
 
-    // owner
-    var token windows.Token
-    if err := windows.OpenProcessToken(handle, windows.TOKEN_QUERY, &token); err == nil {
-        defer token.Close()
-        if user, err := token.GetTokenUser(); err == nil {
-            account, domain, _, err := user.User.Sid.LookupAccount("")
-            if err == nil {
-                pr.User = domain + `\` + account
-            }
-        }
-    }
+	// owner
+	var token windows.Token
+	if err := windows.OpenProcessToken(handle, windows.TOKEN_QUERY, &token); err == nil {
+		defer token.Close()
+		if user, err := token.GetTokenUser(); err == nil {
+			account, domain, _, err := user.User.Sid.LookupAccount("")
+			if err == nil {
+				pr.User = domain + `\` + account
+			}
+		}
+	}
 }
 
 func collectTCP4PIDs(targetPort int, foundPIDs map[int]string) error {

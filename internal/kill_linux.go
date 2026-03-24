@@ -14,7 +14,7 @@ func sendProcessSignal(pid int, sig os.Signal) error {
 	if err != nil {
 		return err
 	}
-	err = proc.Signal(sig) 
+	err = proc.Signal(sig)
 	return err
 }
 
