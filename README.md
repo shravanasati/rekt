@@ -25,6 +25,11 @@ go install github.com/shravanasati/rekt@latest
 rekt 8000
 ```
 
+##### Show more information about the process (name, owner)
+```bash
+rekt 8000 -v
+```
+
 ##### Terminate the process
 ```bash
 rekt 8000 -t

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"text/tabwriter"
 
 	"github.com/shravanasati/rekt/internal"
 	"github.com/urfave/cli/v3"
@@ -25,9 +26,9 @@ func exitError(e error) error {
 
 func main() {
 	cmd := &cli.Command{
-		Name:  "rekt",
-		Usage: "slay the evil process holding your port hostage",
-		Description: "Find the process occupying a port\n$ rekt 8000\n\nKill or terminate the process\n$ rekt 8000 -k (or -t)",
+		Name:        "rekt",
+		Usage:       "slay the evil process holding your port hostage",
+		Description: "Find the process occupying a port\n$ rekt 8000 (-v for verbose output)\n\nKill or terminate the process\n$ rekt 8000 -k (or -t)",
 		Arguments: []cli.Argument{
 			&cli.IntArg{
 				Name:      "port",
@@ -57,15 +58,19 @@ func main() {
 				return exitError(err)
 			}
 
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 			if verbose {
+				fmt.Fprintln(w, "PORT\tPID\tNAME\tTYPE\tUSER")
 				for _, process := range processes {
-					fmt.Printf("port %v -> pid %v (`%v`, %v) owned by '%v'\n", port, process.PID, process.Name, process.Type, process.User)
+					fmt.Fprintf(w, "%v\t%v\t%v\t%v\t%v\n", port, process.PID, process.Name, process.Type, process.User)
 				}
 			} else {
+				fmt.Fprintln(w, "PORT\tPID")
 				for _, process := range processes {
-					fmt.Printf("port %v -> pid %v\n", port, process.PID)
+					fmt.Fprintf(w, "%v\t%v\n", port, process.PID)
 				}
 			}
+			w.Flush()
 
 			killFlag := c.Bool("kill")
 			terminateFlag := c.Bool("terminate")
@@ -80,7 +85,7 @@ func main() {
 
 			ps := internal.NewProcessSlayer()
 			slayErrors := []error{}
-			var slayMethod func (int) error
+			var slayMethod func(int) error
 			switch killmode {
 			case internal.ModeTerm:
 				slayMethod = ps.TermProcess
