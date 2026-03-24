@@ -121,9 +121,9 @@ func readProcessInfo(pr *Process) {
 	if err := windows.OpenProcessToken(handle, windows.TOKEN_QUERY, &token); err == nil {
 		defer token.Close()
 		if user, err := token.GetTokenUser(); err == nil {
-			account, domain, _, err := user.User.Sid.LookupAccount("")
+			account, _, _, err := user.User.Sid.LookupAccount("")
 			if err == nil {
-				pr.User = domain + `\` + account
+				pr.User = account
 			}
 		}
 	}
