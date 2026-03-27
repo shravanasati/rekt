@@ -13,7 +13,7 @@ rekt is available only on Linux and Windows as of now.
 #### From releases (recommended)
 Download the latest release for your platform from the [releases page](https://github.com/shravanasati/rekt/releases).
 
-#### Using Go (requires Go>=1.24)
+#### Using Go (requires Go>=1.25)
 ```bash
 go install github.com/shravanasati/rekt@latest
 ```
