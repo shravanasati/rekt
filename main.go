@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/shravanasati/rekt/internal"
@@ -94,12 +95,21 @@ func main() {
 				slayMethod = ps.KillProcess
 			}
 
+			var wg sync.WaitGroup
+			var mu sync.Mutex
 			for _, pid := range processes {
-				err := slayMethod(pid.PID)
-				if err != nil {
-					slayErrors = append(slayErrors, err)
-				}
+				wg.Add(1)
+				go func(pid int) {
+					defer wg.Done()
+					err := slayMethod(pid)
+					if err != nil {
+						mu.Lock()
+						slayErrors = append(slayErrors, err)
+						mu.Unlock()
+					}
+				}(pid.PID)
 			}
+			wg.Wait()
 
 			err = errors.Join(slayErrors...)
 			if err != nil {

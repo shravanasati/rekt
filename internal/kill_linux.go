@@ -22,12 +22,15 @@ func (ps *linuxProcessSlayer) TermProcess(pid int) error {
 	err := sendProcessSignal(pid, syscall.SIGTERM)
 	fmt.Printf("SIGTERM sent to pid %v\n", pid)
 
-	time.Sleep(500 * time.Millisecond)
-	if err := sendProcessSignal(pid, syscall.Signal(0)); err == nil {
-		// process still exists
-		return fmt.Errorf("pid %d still running after 500ms, retry with --kill/-k to force\n", pid)
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		if checkErr := sendProcessSignal(pid, syscall.Signal(0)); checkErr != nil {
+			return err
+		}
 	}
-	return err
+
+	return fmt.Errorf("pid %d still running after 500ms, retry with --kill/-k to force\n", pid)
 }
 
 func (ps *linuxProcessSlayer) KillProcess(pid int) error {
