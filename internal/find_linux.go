@@ -23,9 +23,13 @@ const maxPIDScanWorkers = 16
 
 type linuxProcessFinder struct{}
 
+func isRootUser() bool {
+	return os.Getuid() == 0
+}
+
 // Returns the process' PID holding the port.
 func (pf *linuxProcessFinder) FindPIDByPort(port int, verbose bool) ([]*Process, error) {
-	if os.Getuid() != 0 {
+	if !isRootUser() {
 		fmt.Println("warning: not running as root, may miss processes owned by other users")
 	}
 

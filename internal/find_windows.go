@@ -62,7 +62,15 @@ type mibUDP6RowOwnerPID struct {
 
 type windowsProcessFinder struct{}
 
+func isElevated() bool {
+	return windows.GetCurrentProcessToken().IsElevated()
+}
+
 func (pf *windowsProcessFinder) FindPIDByPort(port int, verbose bool) ([]*Process, error) {
+	if !isElevated() {
+		fmt.Println("warning: not running with elevated privileges, results may be incomplete")
+	}
+
 	// map of pid -> type (udp/udp6/tcp/tcp6)
 	foundPIDs := map[int]string{}
 
